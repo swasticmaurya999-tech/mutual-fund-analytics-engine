@@ -1,0 +1,904 @@
+openapi: "3.0.3"
+
+info:
+  title: Mutual Fund Analytics API
+  description: |
+    Analytics backend for a mutual fund investment platform.
+
+    Computes and serves **rolling returns**, **max drawdown**, and **CAGR distribution**
+    for 10 tracked schemes across 5 AMCs (ICICI Prudential, HDFC, Axis, SBI, Kotak Mahindra)
+    in 2 categories (Equity: Mid Cap & Small Cap — Direct Growth plans).
+
+    ### Categories tracked
+    
+    `Equity Scheme - Mid Cap Fund` - case insensitive allowed
+
+    `Equity Scheme - Small Cap Fund` - case insensitive allowed
+
+    ### Analytics windows
+    `1Y` · `3Y` · `5Y` · `10Y`
+
+    ### Rate limiting (outbound to mfapi.in)
+    The service enforces a composite triple token-bucket limiter:
+    2 req/s · 50 req/min · 300 req/hr — all three limits are honoured simultaneously.
+
+    ### Data freshness
+    Analytics are **pre-computed** and refreshed daily by a background scheduler.
+    Queries always return from the database (< 200 ms p99).
+
+  version: "1.0.0"
+  contact:
+    name: API Support
+
+servers:
+  - url: /
+    description: |
+      Relative base path — works on any hostname. When deployed the service
+      automatically resolves to the correct host (Render, Railway, Fly.io, etc.).
+
+tags:
+  - name: Funds
+    description: Fund metadata, NAV, and per-fund analytics.
+  - name: Analytics
+    description: Pre-computed performance analytics for a fund over the requested rolling window and rank funds within a category.
+
+paths:
+
+  # ── Health ────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: |
+        Returns `{"status":"ok"}` when the HTTP server is up.
+        Does **not** verify database connectivity — use `/sync/status` for that.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+
+  # ── Funds ─────────────────────────────────────────────────────────────────
+
+  /funds:
+    get:
+      tags: [Funds]
+      summary: List tracked funds
+      description: |
+        Returns all 10 tracked schemes enriched with their current NAV and
+        sync status. Results can be filtered by `category` and/or `amc`.
+
+        Both filters are **case-insensitive**. The `amc` filter performs a
+        substring match so `"Axis"` matches `"Axis Mutual Fund"`.
+      operationId: listFunds
+      parameters:
+        - $ref: "#/components/parameters/QueryCategory"
+        - $ref: "#/components/parameters/QueryAMC"
+      responses:
+        "200":
+          description: Fund list (may be empty if filters match nothing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FundListResponse"
+              example:
+                total: 2
+                funds:
+                  - fund_code: "120505"
+                    fund_name: "Axis Midcap Fund - Direct Plan - Growth"
+                    amc: "Axis Mutual Fund"
+                    category: "Equity Scheme - Mid Cap Fund"
+                    scheme_type: "Open Ended Schemes"
+                    isin_growth: "INF846K01EH3"
+                    sync_status: "done"
+                    current_nav: 133.75
+                    last_updated: "2026-04-17"
+                  - fund_code: "125497"
+                    fund_name: "HDFC Mid-Cap Opportunities Fund - Direct Plan - Growth"
+                    amc: "HDFC Mutual Fund"
+                    category: "Equity Scheme - Mid Cap Fund"
+                    scheme_type: "Open Ended Schemes"
+                    sync_status: "done"
+                    current_nav: 218.30
+                    last_updated: "2026-04-17"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /funds/{code}:
+    get:
+      tags: [Funds]
+      summary: Fund details + latest NAV
+      description: |
+        Returns full scheme metadata together with the current NAV and sync
+        status for a single fund.
+      operationId: getFund
+      parameters:
+        - $ref: "#/components/parameters/PathCode"
+      responses:
+        "200":
+          description: Fund found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FundResponse"
+              example:
+                fund_code: "120505"
+                fund_name: "Axis Midcap Fund - Direct Plan - Growth"
+                amc: "Axis Mutual Fund"
+                category: "Equity Scheme - Mid Cap Fund"
+                scheme_type: "Open Ended Schemes"
+                isin_growth: "INF846K01EH3"
+                sync_status: "done"
+                current_nav: 133.75
+                last_updated: "2026-04-17"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+
+  # ── Analytics ───────────────────────────────────────────────────────────────
+
+  
+  /funds/{code}/analytics:
+    get:
+      tags: [Analytics]
+      summary: Pre-computed performance analytics
+      description: |
+        Returns pre-computed analytics for a fund over the requested rolling
+        window. Analytics are computed nightly and always served from the
+        database (< 200 ms).
+
+        ### Metrics returned
+        | Field | Description |
+        |---|---|
+        | `rolling_returns` | min / max / median / p25 / p75 across all complete rolling periods |
+        | `max_drawdown` | Worst peak-to-trough decline (%) over full history — always ≤ 0 |
+        | `cagr` | Annualised return (%) distribution: min / max / median |
+        | `volatility` | Sample standard deviation of rolling returns (Welford single-pass) |
+
+        ### Insufficient data
+        If the fund has fewer NAV data points than the requested window requires
+        (e.g. a newly-launched fund queried with `window=10Y`), rolling metrics
+        (`rolling_returns`, `cagr`) will be `null`. The response will include
+        `insufficient_data: true` and an `insufficient_data_reason` field that
+        lists which windows _are_ usable. `max_drawdown` is always computed
+        over whatever history is available.
+      operationId: getAnalytics
+      parameters:
+        - $ref: "#/components/parameters/PathCode"
+        - $ref: "#/components/parameters/QueryWindow"
+      responses:
+        "200":
+          description: Analytics found and returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsResponse"
+              example:
+                fund_code: "120505"
+                fund_name: "Axis Midcap Fund - Direct Plan - Growth"
+                category: "Equity Scheme - Mid Cap Fund"
+                amc: "Axis Mutual Fund"
+                window: "3Y"
+                data_availability:
+                  start_date: "2016-01-15"
+                  end_date: "2026-01-06"
+                  total_days: 3644
+                  nav_data_points: 2513
+                rolling_periods_analyzed: 731
+                rolling_returns:
+                  min: 8.2
+                  max: 48.5
+                  median: 22.3
+                  p25: 15.7
+                  p75: 28.9
+                max_drawdown: -32.1
+                cagr:
+                  min: 9.5
+                  max: 45.2
+                  median: 21.8
+                volatility: 7.4
+                computed_at: "2026-01-06T02:30:15Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+
+  /funds/rank:
+    get:
+      tags: [Analytics]
+      summary: Rank funds within a category
+      description: |
+        Returns funds ranked by performance within a single category for the
+        given window. Results are ordered by `sort_by` (default: `median_return`
+        descending — best performing fund is rank 1).
+
+        `total_funds` is the count of all funds matching the filter **before**
+        the `limit` is applied, so callers know how many results were omitted.
+
+        ### Sort semantics
+        | `sort_by` | Ordering |
+        |---|---|
+        | `median_return` (default) | Highest median rolling return first |
+        | `max_drawdown` | Least negative drawdown first (least risky) |
+      operationId: rankFunds
+      parameters:
+        - name: category
+          in: query
+          required: true
+          description: |
+            Category to rank within. Must be one of the two tracked categories
+            (case-insensitive).
+          schema:
+            type: string
+            enum:
+              - "Equity Scheme - Mid Cap Fund"
+              - "Equity Scheme - Small Cap Fund"
+          example: "Equity Scheme - Mid Cap Fund"
+        - $ref: "#/components/parameters/QueryWindow"
+        - name: sort_by
+          in: query
+          required: false
+          description: Ranking metric. Defaults to `median_return`.
+          schema:
+            type: string
+            enum: [median_return, max_drawdown]
+            default: median_return
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of funds to return. Range 1–50. Default 5.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 5
+      responses:
+        "200":
+          description: Ranked fund list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RankingResponse"
+              example:
+                category: "Equity Scheme - Mid Cap Fund"
+                window: "3Y"
+                sorted_by: "median_return"
+                total_funds: 5
+                showing: 2
+                funds:
+                  - rank: 1
+                    fund_code: "120505"
+                    fund_name: "Axis Midcap Fund - Direct Plan - Growth"
+                    amc: "Axis Mutual Fund"
+                    median_return: 22.3
+                    max_drawdown: -32.1
+                    current_nav: 133.75
+                    last_updated: "2026-01-06"
+                  - rank: 2
+                    fund_code: "118989"
+                    fund_name: "Kotak Emerging Equity Fund - Direct - Growth"
+                    amc: "Kotak Mahindra Mutual Fund"
+                    median_return: 21.8
+                    max_drawdown: -29.5
+                    current_nav: 92.31
+                    last_updated: "2026-01-06"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  # ── Sync ──────────────────────────────────────────────────────────────────
+
+  /sync/trigger:
+    post:
+      tags: [Sync]
+      summary: Manually trigger data sync
+      description: |
+        Resets all schemes with `status=error` back to `pending` and starts
+        a full backfill in the background. The HTTP response is immediate
+        (202 Accepted); use `GET /sync/status` to monitor progress.
+
+        The backfill respects all three rate limits (2/s · 50/min · 300/hr).
+        Each scheme's sync is resumable: if the service is restarted mid-run,
+        it will continue from the last committed NAV checkpoint rather than
+        re-fetching the full history.
+      operationId: triggerSync
+      responses:
+        "202":
+          description: Sync accepted and started in the background.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncTriggerResponse"
+              example:
+                status: accepted
+                message: "sync triggered — check GET /sync/status for progress"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sync/status:
+    get:
+      tags: [Sync]
+      summary: Pipeline status
+      description: |
+        Returns the sync state of every tracked scheme plus an aggregate
+        summary. Use this to verify all schemes have `status=done` before
+        relying on analytics results.
+
+        ### Status values
+        | Value | Meaning |
+        |---|---|
+        | `pending` | Waiting to be processed by the backfill |
+        | `running` | Currently being fetched/processed |
+        | `done` | NAV data fully synced; analytics computed |
+        | `error` | Last sync attempt failed; will be retried on next trigger |
+      operationId: getSyncStatus
+      responses:
+        "200":
+          description: Sync status for all schemes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncStatusResponse"
+              example:
+                schemes:
+                  - scheme_code: "120505"
+                    status: "done"
+                    last_nav_date: "2026-04-17"
+                    latest_nav: 133.75
+                    nav_count: 2513
+                    updated_at: "2026-04-17T03:00:00Z"
+                  - scheme_code: "120591"
+                    status: "pending"
+                    nav_count: 0
+                    updated_at: "2026-04-17T02:59:00Z"
+                summary:
+                  total: 10
+                  done: 9
+                  pending: 1
+                  running: 0
+                  error: 0
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+# ── Components ────────────────────────────────────────────────────────────────
+
+components:
+
+  # ── Parameters ──────────────────────────────────────────────────────────────
+
+  parameters:
+    PathCode:
+      name: code
+      in: path
+      required: true
+      description: mfapi.in scheme code (e.g. `"120505"` for Axis Midcap Direct Growth).
+      schema:
+        type: string
+        example: "120505"
+
+    QueryCategory:
+      name: category
+      in: query
+      required: false
+      description: |
+        Filter by category. Case-insensitive. Must match one of the two
+        tracked categories exactly.
+      schema:
+        type: string
+        enum:
+          - "Equity Scheme - Mid Cap Fund"
+          - "Equity Scheme - Small Cap Fund"
+
+    QueryAMC:
+      name: amc
+      in: query
+      required: false
+      description: |
+        Filter by AMC. Case-insensitive substring match.
+        Examples: `"Axis"`, `"HDFC"`, `"SBI"`, `"ICICI"`, `"Kotak"`.
+      schema:
+        type: string
+        example: Axis
+
+    QueryWindow:
+      name: window
+      in: query
+      required: true
+      description: |
+        Rolling period window. Trading-day approximations:
+        `1Y` ≈ 252 days · `3Y` ≈ 756 · `5Y` ≈ 1260 · `10Y` ≈ 2520.
+      schema:
+        type: string
+        enum: ["1Y", "3Y", "5Y", "10Y"]
+
+  # ── Responses ───────────────────────────────────────────────────────────────
+
+  responses:
+    BadRequest:
+      description: |
+        Invalid or missing query parameter. The `code` field identifies
+        the specific validation failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            invalid_window:
+              summary: Invalid window value
+              value:
+                error: "window must be one of: 1Y, 3Y, 5Y, 10Y"
+                code: "INVALID_WINDOW"
+            invalid_category:
+              summary: Invalid category
+              value:
+                error: "invalid category \"foo\" — only two categories are tracked: \"Equity Scheme - Mid Cap Fund\" and \"Equity Scheme - Small Cap Fund\""
+                code: "INVALID_CATEGORY"
+            missing_category:
+              summary: Category not provided to rank endpoint
+              value:
+                error: "category is required — only two categories are tracked: \"Equity Scheme - Mid Cap Fund\" and \"Equity Scheme - Small Cap Fund\""
+                code: "MISSING_CATEGORY"
+            invalid_sort_by:
+              summary: Invalid sort_by value
+              value:
+                error: "sort_by must be median_return or max_drawdown"
+                code: "INVALID_SORT_BY"
+            invalid_limit:
+              summary: Limit out of range
+              value:
+                error: "limit must be an integer between 1 and 50"
+                code: "INVALID_LIMIT"
+
+    NotFound:
+      description: |
+        The requested resource does not exist.
+
+        For `/funds/{code}/analytics`, this also means analytics have not yet
+        been computed (sync may still be in progress). The error code will be
+        `ANALYTICS_NOT_READY` in that case.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            not_found:
+              summary: Fund not found
+              value:
+                error: "fund not found"
+                code: "NOT_FOUND"
+            analytics_not_ready:
+              summary: Analytics not yet computed
+              value:
+                error: "analytics not yet computed for this fund and window — sync may still be in progress"
+                code: "ANALYTICS_NOT_READY"
+
+    InternalError:
+      description: Database or unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: "failed to list funds"
+            code: "DB_ERROR"
+
+  # ── Schemas ─────────────────────────────────────────────────────────────────
+
+  schemas:
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+          example: "window must be one of: 1Y, 3Y, 5Y, 10Y"
+        code:
+          type: string
+          description: |
+            Machine-readable error code. Possible values:
+
+            | Code | Trigger |
+            |---|---|
+            | `INVALID_WINDOW` | `window` param missing or not in {1Y,3Y,5Y,10Y} |
+            | `INVALID_CATEGORY` | `category` param not one of the two tracked values |
+            | `MISSING_CATEGORY` | `category` param absent from `/funds/rank` |
+            | `INVALID_SORT_BY` | `sort_by` not `median_return` or `max_drawdown` |
+            | `INVALID_LIMIT` | `limit` outside [1, 50] |
+            | `NOT_FOUND` | Fund code not tracked |
+            | `ANALYTICS_NOT_READY` | Analytics not yet computed for fund+window |
+            | `MISSING_CODE` | Path param `code` is empty |
+            | `DB_ERROR` | Database query failed |
+          example: "INVALID_WINDOW"
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+
+    FundResponse:
+      type: object
+      required: [fund_code, fund_name, amc, category, scheme_type, sync_status]
+      properties:
+        fund_code:
+          type: string
+          description: mfapi.in scheme code.
+          example: "120505"
+        fund_name:
+          type: string
+          description: Full scheme name as returned by mfapi.in.
+          example: "Axis Midcap Fund - Direct Plan - Growth"
+        amc:
+          type: string
+          description: Asset Management Company name.
+          example: "Axis Mutual Fund"
+        category:
+          type: string
+          description: Canonical scheme category.
+          example: "Equity Scheme - Mid Cap Fund"
+        scheme_type:
+          type: string
+          example: "Open Ended Schemes"
+        isin_growth:
+          type: string
+          nullable: true
+          description: ISIN for the growth option (if available).
+          example: "INF846K01EH3"
+        sync_status:
+          type: string
+          description: Current sync pipeline state.
+          enum: [pending, running, done, error, unknown]
+          example: done
+        current_nav:
+          type: number
+          format: double
+          nullable: true
+          description: Latest available NAV value.
+          example: 133.75
+        last_updated:
+          type: string
+          format: date
+          nullable: true
+          description: Date of the latest NAV in `YYYY-MM-DD` format.
+          example: "2026-04-17"
+
+    FundListResponse:
+      type: object
+      required: [total, funds]
+      properties:
+        total:
+          type: integer
+          description: Number of funds returned (after filtering).
+          example: 10
+        funds:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundResponse"
+
+    DataAvailability:
+      type: object
+      required: [start_date, end_date, total_days, nav_data_points]
+      properties:
+        start_date:
+          type: string
+          format: date
+          description: Earliest NAV date available for this fund.
+          example: "2016-01-15"
+        end_date:
+          type: string
+          format: date
+          description: Latest NAV date available.
+          example: "2026-01-06"
+        total_days:
+          type: integer
+          description: Calendar days between start and end (includes weekends/holidays).
+          example: 3644
+        nav_data_points:
+          type: integer
+          description: Actual number of NAV rows stored (trading days only).
+          example: 2513
+
+    RollingReturns:
+      type: object
+      description: Distribution of total returns across all complete rolling periods.
+      properties:
+        min:
+          type: number
+          format: double
+          nullable: true
+          description: Minimum rolling return (%) observed.
+          example: 8.2
+        max:
+          type: number
+          format: double
+          nullable: true
+          description: Maximum rolling return (%) observed.
+          example: 48.5
+        median:
+          type: number
+          format: double
+          nullable: true
+          description: Median rolling return (%).
+          example: 22.3
+        p25:
+          type: number
+          format: double
+          nullable: true
+          description: 25th percentile rolling return (%).
+          example: 15.7
+        p75:
+          type: number
+          format: double
+          nullable: true
+          description: 75th percentile rolling return (%).
+          example: 28.9
+
+    CAGRDistribution:
+      type: object
+      description: |
+        Distribution of annualised returns (CAGR %) across all complete rolling
+        periods. CAGR is computed using actual calendar days so leap years are
+        handled correctly.
+      properties:
+        min:
+          type: number
+          format: double
+          nullable: true
+          example: 9.5
+        max:
+          type: number
+          format: double
+          nullable: true
+          example: 45.2
+        median:
+          type: number
+          format: double
+          nullable: true
+          example: 21.8
+
+    AnalyticsResponse:
+      type: object
+      required:
+        - fund_code
+        - fund_name
+        - category
+        - amc
+        - window
+        - data_availability
+        - rolling_periods_analyzed
+        - rolling_returns
+        - cagr
+        - computed_at
+      properties:
+        fund_code:
+          type: string
+          example: "120505"
+        fund_name:
+          type: string
+          example: "Axis Midcap Fund - Direct Plan - Growth"
+        category:
+          type: string
+          example: "Equity Scheme - Mid Cap Fund"
+        amc:
+          type: string
+          example: "Axis Mutual Fund"
+        window:
+          type: string
+          enum: ["1Y", "3Y", "5Y", "10Y"]
+          example: "3Y"
+        data_availability:
+          $ref: "#/components/schemas/DataAvailability"
+        rolling_periods_analyzed:
+          type: integer
+          description: |
+            Number of complete rolling periods computed. 0 when
+            `insufficient_data` is true.
+          example: 731
+        rolling_returns:
+          $ref: "#/components/schemas/RollingReturns"
+        max_drawdown:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Worst peak-to-trough percentage decline over the **full** NAV
+            history (not the rolling window). Always ≤ 0.
+          example: -32.1
+        cagr:
+          $ref: "#/components/schemas/CAGRDistribution"
+        volatility:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Sample standard deviation of rolling returns (Welford single-pass).
+            Omitted from the response when null.
+          example: 7.4
+        insufficient_data:
+          type: boolean
+          description: |
+            `true` when the fund does not have enough NAV history for a
+            complete rolling period in the requested window. Rolling return
+            and CAGR fields will be `null`; max_drawdown is still populated.
+          example: false
+        insufficient_data_reason:
+          type: string
+          description: |
+            Only present when `insufficient_data` is `true`. Explains exactly
+            what is missing and lists the windows that **are** available.
+          example: "Not enough NAV history for a 10Y rolling window. Need at least 2520 trading days of data; this fund has 1800 (available since 2019-01-15). Rolling metrics are unavailable for this window. Max drawdown is still computed over the full history. Try one of the available windows: 1Y, 3Y, 5Y."
+        computed_at:
+          type: string
+          format: date-time
+          description: UTC timestamp when analytics were last computed (RFC 3339).
+          example: "2026-01-06T02:30:15Z"
+
+    RankFundItem:
+      type: object
+      required: [rank, fund_code, fund_name, amc]
+      properties:
+        rank:
+          type: integer
+          description: Position in the ranked list (1 = best).
+          example: 1
+        fund_code:
+          type: string
+          example: "120505"
+        fund_name:
+          type: string
+          example: "Axis Midcap Fund - Direct Plan - Growth"
+        amc:
+          type: string
+          example: "Axis Mutual Fund"
+        median_return:
+          type: number
+          format: double
+          nullable: true
+          description: Median rolling return (%) for the requested window.
+          example: 22.3
+        max_drawdown:
+          type: number
+          format: double
+          nullable: true
+          description: Max drawdown (%) over full history. Always ≤ 0.
+          example: -32.1
+        current_nav:
+          type: number
+          format: double
+          nullable: true
+          description: Latest NAV value.
+          example: 133.75
+        last_updated:
+          type: string
+          format: date
+          nullable: true
+          description: Date of the latest NAV in `YYYY-MM-DD` format.
+          example: "2026-01-06"
+
+    RankingResponse:
+      type: object
+      required: [category, window, sorted_by, total_funds, showing, funds]
+      properties:
+        category:
+          type: string
+          description: Canonical category name used for the query.
+          example: "Equity Scheme - Mid Cap Fund"
+        window:
+          type: string
+          enum: ["1Y", "3Y", "5Y", "10Y"]
+          example: "3Y"
+        sorted_by:
+          type: string
+          enum: [median_return, max_drawdown]
+          example: median_return
+        total_funds:
+          type: integer
+          description: Total funds matching the filter **before** the `limit` is applied.
+          example: 5
+        showing:
+          type: integer
+          description: Number of funds actually returned in this response.
+          example: 5
+        funds:
+          type: array
+          items:
+            $ref: "#/components/schemas/RankFundItem"
+
+    SyncStatusItem:
+      type: object
+      required: [scheme_code, status, nav_count, updated_at]
+      properties:
+        scheme_code:
+          type: string
+          example: "120505"
+        status:
+          type: string
+          enum: [pending, running, done, error]
+          example: done
+        last_nav_date:
+          type: string
+          format: date
+          nullable: true
+          description: Date of the most recently ingested NAV row.
+          example: "2026-04-17"
+        latest_nav:
+          type: number
+          format: double
+          nullable: true
+          description: NAV value on `last_nav_date`.
+          example: 133.75
+        nav_count:
+          type: integer
+          description: Total number of NAV rows stored for this scheme.
+          example: 2513
+        error_msg:
+          type: string
+          nullable: true
+          description: Last error message (only present when status is `error`).
+        updated_at:
+          type: string
+          format: date-time
+          description: Last time this sync state record was updated (ISO 8601 UTC).
+          example: "2026-04-17T03:00:00Z"
+
+    SyncStatusSummary:
+      type: object
+      required: [total, done, pending, running, error]
+      properties:
+        total:
+          type: integer
+          example: 10
+        done:
+          type: integer
+          example: 9
+        pending:
+          type: integer
+          example: 1
+        running:
+          type: integer
+          example: 0
+        error:
+          type: integer
+          example: 0
+
+    SyncStatusResponse:
+      type: object
+      required: [schemes, summary]
+      properties:
+        schemes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SyncStatusItem"
+        summary:
+          $ref: "#/components/schemas/SyncStatusSummary"
+
+    SyncTriggerResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+          example: accepted
+        message:
+          type: string
+          example: "sync triggered — check GET /sync/status for progress"

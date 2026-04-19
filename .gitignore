@@ -1,0 +1,65 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and Editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Go
+bin/
+dist/
+vendor/
+*.out
+*.prof
+*.pprof
+*.test
+coverage.out
+coverage.html
+
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Logs and database
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# IDE specific
+.vscode
+.idea
+*.iml
+*.iws
+*.ipr
