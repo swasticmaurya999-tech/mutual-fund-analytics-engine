@@ -42,7 +42,7 @@ A production-ready Go backend service that ingests historical NAV (Net Asset Val
 
 ```bash
 git clone <repo-url>
-cd mutualFundAnalysis
+cd mutual-fund-analytics-engine
 ```
 
 ### 2. Configure environment
