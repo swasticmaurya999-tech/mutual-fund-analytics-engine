@@ -1,65 +1,102 @@
-# Environment variables
+# =============================================================================
+# Environment / Secrets
+# =============================================================================
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example        # keep the example template committed
 
-# IDE and Editor
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
-
-# Go
+# =============================================================================
+# Go build artifacts
+# =============================================================================
+# Compiled binaries (service entrypoint)
 bin/
 dist/
-vendor/
+server
+server.exe
+mutualfundanalysis
+mutualfundanalysis.exe
+
+# Test binaries produced by `go test -c`
+*.test
+*.test.exe
+
+# Go test & build cache (managed by the toolchain, not source)
+# These live in $GOCACHE / $GOPATH, but guard against accidental local dirs
+/tmp/
+
+# Profiling and coverage output
 *.out
 *.prof
 *.pprof
-*.test
 coverage.out
 coverage.html
+cpu.prof
+mem.prof
 
-# Build artifacts
-*.exe
-*.exe~
-*.dll
-*.so
-*.so.*
-*.dylib
+# =============================================================================
+# Go modules
+# =============================================================================
+# go.mod and go.sum MUST be committed.
+# vendor/ is ignored because this project uses the module proxy (go.sum).
+# If you ever run `go mod vendor`, remove this line.
+vendor/
 
-# Logs and database
-*.log
-logs/
-*.db
-*.sqlite
-*.sqlite3
+# =============================================================================
+# IDE / Editor
+# =============================================================================
+# VS Code
+.vscode/
 
-# OS specific
+# JetBrains (GoLand, IntelliJ)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# Eclipse
+.project
+.classpath
+.settings/
+*.launch
+.c9/
+
+# =============================================================================
+# OS-generated files
+# =============================================================================
+# macOS
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
 
-# Temporary files
+# Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Linux
+*~
+
+# =============================================================================
+# Logs
+# =============================================================================
+*.log
+logs/
+
+# =============================================================================
+# Temporary / scratch
+# =============================================================================
 tmp/
 temp/
 *.tmp
-
-# IDE specific
-.vscode
-.idea
-*.iml
-*.iws
-*.ipr
+scratch/
