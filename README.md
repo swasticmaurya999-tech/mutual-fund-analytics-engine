@@ -31,8 +31,34 @@ A production-ready Go backend service that ingests historical NAV (Net Asset Val
 
 ## Prerequisites
 
-- Go 1.21+
-- A PostgreSQL database (Supabase free tier works)
+- **Go 1.21+** — see [Installation](#installing-go) below if not already installed
+- **Git** — to clone the repository
+- A **PostgreSQL database** (Supabase free tier works)
+
+### Installing Go
+
+If Go is not installed on your system:
+
+**Windows:**
+1. Download the installer from [go.dev/dl](https://go.dev/dl/) (pick the `.msi` for Windows)
+2. Run the installer — it adds Go to your `PATH` automatically
+3. Open a **new** terminal (Command Prompt or PowerShell) and verify:
+   ```cmd
+   go version
+   ```
+   You should see something like `go version go1.22.2 windows/amd64`.
+
+**macOS / Linux:**
+```bash
+# macOS (Homebrew)
+brew install go
+
+# Ubuntu/Debian
+sudo apt update && sudo apt install golang-go
+
+# Verify
+go version
+```
 
 ---
 
@@ -40,38 +66,64 @@ A production-ready Go backend service that ingests historical NAV (Net Asset Val
 
 ### 1. Clone the repository
 
-```bash
+```cmd
 git clone <repo-url>
 cd mutual-fund-analytics-engine
 ```
 
 ### 2. Configure environment
 
+**Windows (Command Prompt):**
+```cmd
+copy .env.example .env
+```
+
+**Windows (PowerShell):**
+```powershell
+Copy-Item .env.example .env
+```
+
+**macOS / Linux:**
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Now edit `.env` with your database credentials:
 
 ```env
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:6543/postgres
+DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
 PORT=8080
 LOG_LEVEL=info
 ```
 
-### 3. Run database migration
+> **Note:** Use the Supabase **Session Pooler** connection string (found under **Connect → Session mode** in your Supabase dashboard). The direct connection URL resolves to IPv6, which may not work on all ISPs. The session pooler URL resolves to IPv4 and works everywhere.
 
-Open your Supabase SQL editor (or `psql`) and run the entire SQL file:
+> **Note:** If your database password contains special characters like `[`, `]`, `@`, `#`, or `%`, they must be URL-encoded (e.g. `[` → `%5B`, `]` → `%5D`).
 
-```bash
-db/migrations/001_initial_schema.sql
+### 3. Install Go dependencies
+
+```cmd
+go mod download
+```
+
+This downloads all required Go packages (`chi`, `pgx`, `godotenv`) specified in `go.mod`.
+
+### 4. Run database migration
+
+Open your Supabase dashboard → **SQL Editor** → **New Query**, then paste the contents of `db/migrations/001_initial_schema.sql` and click **Run**.
+
+To view the file contents locally:
+```cmd
+type db\migrations\001_initial_schema.sql
 ```
 
 The migration is idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`) and safe to re-run.
 
-### 4. Start the service
+> **If you are using the provided `.env` file:** The database already has the schema and data pre-loaded. You can **skip this step** entirely — the service will connect and find everything ready.
 
-```bash
+### 5. Start the service
+
+```cmd
 go run ./cmd/server
 ```
 
@@ -82,7 +134,7 @@ On first startup the service will:
 4. Pre-compute analytics for all 4 windows
 5. Start the HTTP server on the configured port
 
-> **Note:** The HTTP server only starts after the initial backfill and analytics computation finish. This ensures every endpoint serves complete data from the first request. Subsequent starts are fast — the checkpoint logic detects already-synced schemes and skips them.
+> **Note:** The backfill runs in the background — the HTTP server starts immediately and is ready to serve requests while data syncs behind the scenes. If the database already has data from a previous run, the checkpoint logic detects already-synced schemes and skips them, so subsequent starts are fast.
 
 ---
 
