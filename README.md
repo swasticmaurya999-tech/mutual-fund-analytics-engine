@@ -342,7 +342,7 @@ mutualFundAnalysis/
 
 ## Database Schema (Overview)
 
-Managed by two sequential migration files. Key design choices:
+Managed by a single migration file. Key design choices:
 
 - `nav_data` uses `NUMERIC(20,5)` (not `FLOAT`) to store NAVs without floating-point rounding errors
 - `nav_data` primary key is `(scheme_code, nav_date)` — ensures idempotent inserts via `ON CONFLICT DO NOTHING`
