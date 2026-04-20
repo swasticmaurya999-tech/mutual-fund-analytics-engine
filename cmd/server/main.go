@@ -74,30 +74,20 @@ func run() error {
 	// ── 9. Seed scheme codes + sync_state (idempotent) ────────────────────────
 	ingestion.SeedSchemes(ctx, st, log)
 
-	// ── 10. Backfill (blocking) ───────────────────────────────────────────────
-	// The HTTP server only starts after all schemes are synced and analytics
-	// are pre-computed. This ensures the API always serves complete data.
-	log.Info("starting initial backfill — HTTP server will start after completion")
-	pipeline.RunBackfillSync(ctx, log)
-
-	if ctx.Err() != nil {
-		return nil // shutdown requested during backfill
-	}
-
-	// ── 10b. Analytics repair pass ────────────────────────────────────────────
-	// If the server crashed between SaveSyncResult and ComputeAll on a previous
-	// run, some schemes will have sync_state.status='done' (data is safe) but
-	// analytics_status='pending' (analytics never written). The backfill queue
-	// does not re-pick these schemes because they are already 'done'.
-	//
-	// RepairAnalytics detects and fixes this gap before the HTTP server opens,
-	// so the API never serves a scheme with missing analytics.
-	log.Info("running analytics repair pass")
-	pipeline.RepairAnalytics(ctx)
-
-	if ctx.Err() != nil {
-		return nil // shutdown requested during repair
-	}
+	// ── 10. Background Sync & Repair ──────────────────────────────────────────
+	// Run the initial backfill and analytics repair pass in a background goroutine.
+	// This ensures the HTTP server boots instantly and passes health checks
+	// even if the external API is slow or rate-limited.
+	// Clients can use GET /sync/status to monitor progress.
+	go func() {
+		log.Info("starting background backfill")
+		pipeline.RunBackfill(ctx)
+		
+		if ctx.Err() == nil {
+			log.Info("running analytics repair pass")
+			pipeline.RepairAnalytics(ctx)
+		}
+	}()
 
 	// ── 11. Daily sync scheduler (background) ────────────────────────────────
 	scheduler := ingestion.NewScheduler(pipeline)

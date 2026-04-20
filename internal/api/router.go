@@ -12,10 +12,10 @@ import (
 
 // Handler holds shared dependencies for all HTTP handlers.
 type Handler struct {
-	store    DataStore
-	pipeline PipelineRunner
+	store     DataStore
+	pipeline  PipelineRunner
 	analytics *analytics.Engine
-	log      *slog.Logger
+	log       *slog.Logger
 }
 
 // NewRouter wires up all routes and returns a ready-to-serve http.Handler.
@@ -38,9 +38,12 @@ func NewRouter(
 	r.Use(recoverer(log))
 	r.Use(middleware.Compress(5))
 
-	// Health check
+	// Health check (GET for humans, HEAD for UptimeRobot free tier)
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	r.Head("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
 
 	// Fund endpoints

@@ -293,7 +293,7 @@ go test -run TestGetAnalytics ./internal/api/
 mutualFundAnalysis/
 ├── cmd/
 │   └── server/
-│       └── main.go              # Entry point: startup sequencing
+│       └── main.go              # Entry point: background sync + HTTP server
 ├── db/
 │   └── migrations/
 │       ├── 001_initial_schema.sql
