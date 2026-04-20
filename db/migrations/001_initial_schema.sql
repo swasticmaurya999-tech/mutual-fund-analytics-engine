@@ -145,6 +145,10 @@ CREATE TABLE IF NOT EXISTS sync_state (
     scheme_code     TEXT        PRIMARY KEY REFERENCES schemes(code) ON DELETE CASCADE,
     status          TEXT        NOT NULL DEFAULT 'pending'
                                 CHECK (status IN ('pending', 'running', 'done', 'error')),
+    analytics_status TEXT       NOT NULL DEFAULT 'pending'
+                                CHECK (analytics_status IN ('pending', 'done', 'error')),
+    analytics_error TEXT,
+    analytics_computed_at TIMESTAMPTZ,
     last_nav_date   DATE,                               -- checkpoint: max nav_date successfully committed
     latest_nav      NUMERIC(20, 5),                     -- NAV value on last_nav_date (for ranking response)
     nav_count       INTEGER     NOT NULL DEFAULT 0,     -- total rows stored for this scheme
@@ -156,6 +160,11 @@ CREATE TABLE IF NOT EXISTS sync_state (
 -- Used by FOR UPDATE SKIP LOCKED to pick next pending/stale job
 CREATE INDEX IF NOT EXISTS idx_sync_state_status_updated
     ON sync_state (status, updated_at ASC);
+
+-- Partial index: fast lookup of schemes that need an analytics repair pass.
+CREATE INDEX IF NOT EXISTS idx_sync_state_analytics_pending
+    ON sync_state (scheme_code)
+    WHERE status = 'done' AND analytics_status != 'done';
 
 
 -- =============================================================================

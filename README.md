@@ -59,19 +59,15 @@ PORT=8080
 LOG_LEVEL=info
 ```
 
-### 3. Run database migrations
+### 3. Run database migration
 
-Open your Supabase SQL editor (or `psql`) and run the migrations in order:
+Open your Supabase SQL editor (or `psql`) and run the entire SQL file:
 
 ```bash
-# Migration 001 — full schema
 db/migrations/001_initial_schema.sql
-
-# Migration 002 — analytics lifecycle tracking
-db/migrations/002_analytics_status.sql
 ```
 
-Both migrations are idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`) and safe to re-run.
+The migration is idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`) and safe to re-run.
 
 ### 4. Start the service
 
@@ -296,8 +292,7 @@ mutualFundAnalysis/
 │       └── main.go              # Entry point: background sync + HTTP server
 ├── db/
 │   └── migrations/
-│       ├── 001_initial_schema.sql
-│       └── 002_analytics_status.sql
+│       └── 001_initial_schema.sql
 ├── internal/
 │   ├── analytics/
 │   │   ├── engine.go            # Rolling returns, drawdown, CAGR computation
