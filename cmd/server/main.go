@@ -82,7 +82,6 @@ func run() error {
 	go func() {
 		log.Info("starting background backfill")
 		pipeline.RunBackfill(ctx)
-		
 		if ctx.Err() == nil {
 			log.Info("running analytics repair pass")
 			pipeline.RepairAnalytics(ctx)

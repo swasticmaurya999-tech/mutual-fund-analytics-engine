@@ -123,29 +123,6 @@ type syncStatusResponse struct {
 	} `json:"summary"`
 }
 
-// --- Conversion helpers ---
-
-func toFundResponse(sc *models.Scheme, ss *models.SyncState) *fundResponse {
-	f := &fundResponse{
-		Code:       sc.Code,
-		Name:       sc.Name,
-		AMC:        sc.AMC,
-		Category:   sc.Category,
-		SchemeType: sc.SchemeType,
-		ISINGrowth: sc.ISINGrowth,
-		SyncStatus: "unknown",
-	}
-	if ss != nil {
-		f.SyncStatus = ss.Status
-		f.CurrentNAV = ss.LatestNAV
-		if ss.LastNavDate != nil {
-			d := ss.LastNavDate.Format("2006-01-02")
-			f.LastUpdated = &d
-		}
-	}
-	return f
-}
-
 func toAnalyticsResponse(sc *models.Scheme, a *models.Analytics) *analyticsResponse {
 	r := &analyticsResponse{
 		FundCode:   sc.Code,
@@ -246,7 +223,6 @@ func toRankItem(rank int, r *models.RankRow) *rankFundItem {
 	return item
 }
 
-// --- HTTP helpers ---
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

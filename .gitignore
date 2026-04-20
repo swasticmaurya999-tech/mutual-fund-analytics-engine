@@ -30,6 +30,8 @@ mutualfundanalysis.exe
 *.pprof
 coverage.out
 coverage.html
+coverage/
+coverage
 cpu.prof
 mem.prof
 

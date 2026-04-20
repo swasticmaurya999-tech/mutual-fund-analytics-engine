@@ -191,4 +191,3 @@ func (c *CompositeRateLimiter) persist(ctx context.Context) {
 		}
 	}
 }
-

@@ -1,9 +1,6 @@
 package ingestion
 
-import (
-	"context"
-	"log/slog"
-)
+import "context"
 
 // RunBackfill processes all schemes that need syncing (status: pending/error/stale-running).
 // Uses FOR UPDATE SKIP LOCKED so it is safe to call from multiple goroutines or processes.
@@ -50,18 +47,4 @@ func (p *Pipeline) RunBackfill(ctx context.Context) {
 	}
 }
 
-// RunBackfillSync is the synchronous version used during startup.
-// The HTTP server should not start until this returns.
-func (p *Pipeline) RunBackfillSync(ctx context.Context, log *slog.Logger) {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		p.RunBackfill(ctx)
-	}()
-	select {
-	case <-done:
-		log.Info("initial backfill phase done")
-	case <-ctx.Done():
-		log.Warn("startup backfill interrupted by context cancellation")
-	}
-}
+

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -125,12 +126,11 @@ func (c *Client) FetchSchemeData(
 		}
 
 		if err != nil {
-			// Network/timeout error
 			errMsg := err.Error()
 			logEntry.ErrorMsg = &errMsg
 			c.store.LogRequest(ctx, logEntry)
 			lastErr = fmt.Errorf("http request: %w", err)
-			continue // retry
+			continue
 		}
 
 		status := resp.StatusCode
@@ -157,7 +157,7 @@ func (c *Client) FetchSchemeData(
 			case <-time.After(cooldownAfter429):
 			}
 			lastErr = fmt.Errorf("rate limited (429)")
-			continue // retry
+			continue
 
 		case status >= 500:
 			// Server error — transient, retry
@@ -165,7 +165,7 @@ func (c *Client) FetchSchemeData(
 			logEntry.ErrorMsg = &errMsg
 			c.store.LogRequest(ctx, logEntry)
 			lastErr = fmt.Errorf("server error %d", status)
-			continue // retry
+			continue
 
 		default:
 			// 4xx client error (except 429) — do NOT retry
@@ -275,11 +275,7 @@ func ParseResponse(schemeCode string, resp *MFAPIResponse, log *slog.Logger) (*m
 
 // sortNAVRowsAsc sorts NAV rows oldest-first in place.
 func sortNAVRowsAsc(rows []models.NAVRow) {
-	for i := 0; i < len(rows)-1; i++ {
-		for j := i + 1; j < len(rows); j++ {
-			if rows[j].NavDate.Before(rows[i].NavDate) {
-				rows[i], rows[j] = rows[j], rows[i]
-			}
-		}
-	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].NavDate.Before(rows[j].NavDate)
+	})
 }
