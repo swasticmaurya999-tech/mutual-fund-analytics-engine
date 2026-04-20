@@ -332,7 +332,6 @@ mutualFundAnalysis/
 │       ├── syncstate.go         # Job queue + checkpoint operations
 │       ├── ratelimiter.go       # Token bucket state persistence
 │       └── requestlog.go        # Audit log writes
-├── seeds.json                   # Scheme codes with verified ISINs and NAVs
 ├── .env.example
 ├── go.mod
 ├── DESIGN_DECISIONS.md
