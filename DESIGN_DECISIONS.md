@@ -146,3 +146,46 @@ This ensures the API never silently returns empty or misleading analytics — ca
 *Pipeline resumability after crash* is tested in `internal/api/pipeline_test.go` using a mock `sync_state` that pre-populates all four lifecycle states (done/pending/running/error). The test asserts that `GET /sync/status` surfaces each state accurately in both the per-scheme array and the aggregate summary — giving an operator a complete picture of which schemes survived, which stalled, and which need attention. `POST /sync/trigger` is verified to return 202 immediately (non-blocking), confirming the recovery flow can be initiated without waiting for sync to complete.
 
 *API response time* is enforced in every test through the `do()` helper in `handlers_test.go`, which wraps every `h.ServeHTTP()` call with a `time.Since()` assertion that fails the test if the response exceeds 200ms. This applies to all subtests including validation errors and DB-error paths — not only happy paths. Since all handlers read from pre-computed tables (no analytics computed at request time), the <200ms bound is trivially met in production and demonstrably met in tests against the in-process mock.
+
+---
+
+## Future Evolution: Event-Driven Analytics
+
+The prompt asks the system to be built for evolution — specifically, to answer questions like *"How did a fund perform during the COVID crash?"* or *"What was the return impact of a specific market event?"* This section documents not just how we would build it, but why the current architecture was intentionally designed so these features cost almost nothing to add.
+
+### The Product Problem
+
+Investors and analysts do not think in fixed calendar windows (1Y, 3Y, 5Y). They think in market events: the COVID crash, the 2008 GFC, the 2022 rate hike cycle. The missing product capability is a way to answer: *"Given a named market event and a fund, what were the analytics during and around that period — and how does it compare to the period before it?"*
+
+This is a richer, more contextual analytical lens than fixed-window rolling returns alone.
+
+### Why the Current Architecture Already Supports This
+
+Two deliberate design choices made today make this evolution additive with no structural changes:
+
+**1. Raw time-series data is preserved.** The `nav_data` table stores every NAV data point as-is, unaggregated, indexed on `(scheme_code, nav_date)`. We never discard granular data in favour of summaries. This means any arbitrary date window — whether a named event, a custom range, or a regulatory quarter — can always be sliced directly from this table without any re-ingestion.
+
+**2. The analytics engine is stateless and date-agnostic.** The core computation functions (CAGR, max drawdown, volatility) operate purely on a `[]NAVRow` slice. They have no knowledge of how that slice was produced or what time window it represents. This means the exact same functions that power the pre-computed 1Y/3Y/5Y analytics can also power any on-demand event analysis.
+
+### How We Would Implement It
+
+The implementation would be purely additive — three layers, no refactoring:
+
+**Layer 1 — Named Event Catalogue (Data):** Introduce an `events` table with columns `(name, start_date, end_date, description)`, seeded with well-known Indian equity market events: `covid-crash` (Feb–May 2020), `covid-recovery` (Jun 2020–Dec 2021), `2022-rate-hike-selloff` (Jan–Sep 2022), and so on. Event lookup is an exact, case-insensitive match by name slug — no fuzzy search — to avoid ambiguous results.
+
+**Layer 2 — On-Demand Computation (Engine):** Add a single new public function `ComputeForSlice(navs []NAVRow)` to the existing analytics engine. It takes any slice, computes total return, CAGR over the actual calendar duration, max drawdown, and annualised volatility, and returns the result. Since a typical event spans 3–12 months of trading data (60–250 rows), this computation completes in under 1ms — no caching or pre-computation required.
+
+**Layer 3 — New API Endpoints (Handlers):** Four thin handler functions, each following the same validation-first pattern as every existing handler:
+- `GET /funds/{code}/history?start_date=&end_date=` — Returns raw NAV time-series for any date range. Useful for clients who want to run their own math or build charts.
+- `GET /funds/{code}/analytics/range?start_date=&end_date=` — On-demand analytics for a custom date range.
+- `GET /funds/{code}/analytics/event?name=covid-crash` — Resolves the event slug to a date range, fetches the NAV slice, and returns analytics for that event period.
+- `GET /funds/{code}/analytics/compare?name=covid-crash` — The most powerful endpoint: returns pre-event, during-event, and post-event analytics side-by-side, making the impact of any market event immediately quantifiable.
+
+### Why On-Demand, Not Pre-Computed
+
+A natural question is whether event analytics should also be pre-computed at sync time, like the fixed-window analytics. The answer is no, for two reasons:
+
+- **The event catalogue is open-ended.** New events can be added at any time. Pre-computing analytics for every fund × every event would require re-running the pipeline on every catalogue update. On-demand computation avoids this coupling entirely.
+- **The data volume is small.** A 6-month event window is ~125 trading days per fund. Computing CAGR and drawdown over 125 floats in Go takes microseconds. The `<200ms` SLA is not at risk — the bottleneck is always the database round-trip, not the computation.
+
+This design reflects a deliberate trade-off: pre-computation is the right strategy for fixed, frequently queried windows (1Y/3Y/5Y); on-demand computation is the right strategy for flexible, event-driven queries where the parameter space is large and the computation is cheap.
